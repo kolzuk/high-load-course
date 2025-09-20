@@ -2,21 +2,18 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
-import ru.quipy.common.utils.RateLimiter
-import ru.quipy.common.utils.TokenBucketRateLimiter
 import ru.quipy.common.utils.makeRateLimiter
 import ru.quipy.common.utils.okhttp.RateLimiterInterceptor
+import ru.quipy.common.utils.okhttp.WindowLimiterInterceptor
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
-import java.util.*
-import java.util.concurrent.TimeUnit
+import java.util.UUID
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -32,8 +29,19 @@ class PaymentExternalSystemAdapterImpl(
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
 
-        // Чтобы сразу не заспамило
-        private const val RATE_EPS = 3
+        private const val DEFAULT_TARGET_UTILIZATION: Double = 0.8
+
+        private fun safeRps(limit: Int, headroom: Double = 1.0): Int {
+            require(limit > 0)
+            require(headroom > 0 && headroom <= 1)
+
+            val safe = kotlin.math.ceil(limit.toDouble() * headroom)
+                .coerceAtLeast(1.0)
+                .toInt()
+
+            return safe
+        }
+
     }
 
     private val serviceName = properties.serviceName
@@ -42,9 +50,10 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    val rateLimiter = makeRateLimiter(accountName, rateLimitPerSec - RATE_EPS)
+    private val rateLimiter = makeRateLimiter(accountName, safeRps(rateLimitPerSec, DEFAULT_TARGET_UTILIZATION))
     private val client = OkHttpClient
         .Builder()
+        .addInterceptor(WindowLimiterInterceptor(parallelRequests))
         .addInterceptor(RateLimiterInterceptor(rateLimiter))
         .build()
 
