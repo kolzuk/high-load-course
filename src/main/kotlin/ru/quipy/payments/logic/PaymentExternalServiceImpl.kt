@@ -31,17 +31,16 @@ class PaymentExternalSystemAdapterImpl(
 
         private const val DEFAULT_TARGET_UTILIZATION: Double = 0.8
 
-        private fun safeRps(limit: Int, headroom: Double = 1.0): Int {
+        private fun safeRps(limit: Int, targetUtilization: Double = 1.0): Int {
             require(limit > 0)
-            require(headroom > 0 && headroom <= 1)
+            require(targetUtilization > 0 && targetUtilization <= 1)
 
-            val safe = kotlin.math.ceil(limit.toDouble() * headroom)
-                .coerceAtLeast(1.0)
+            val safe = kotlin.math.floor(limit.toDouble() * targetUtilization)
                 .toInt()
+                .coerceAtLeast(1)
 
             return safe
         }
-
     }
 
     private val serviceName = properties.serviceName
@@ -50,7 +49,8 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val rateLimiter = makeRateLimiter(accountName, safeRps(rateLimitPerSec, DEFAULT_TARGET_UTILIZATION))
+    private val safeRps = safeRps(rateLimitPerSec, DEFAULT_TARGET_UTILIZATION)
+    private val rateLimiter = makeRateLimiter(accountName, safeRps)
     private val client = OkHttpClient
         .Builder()
         .addInterceptor(WindowLimiterInterceptor(parallelRequests))
