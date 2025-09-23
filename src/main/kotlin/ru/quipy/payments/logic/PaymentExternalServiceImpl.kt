@@ -2,16 +2,21 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.RateLimiter
+import ru.quipy.common.utils.TokenBucketRateLimiter
+import ru.quipy.common.utils.makeRateLimiter
+import ru.quipy.common.utils.okhttp.RateLimiterInterceptor
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
 import java.util.*
-
+import java.util.concurrent.TimeUnit
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -26,6 +31,9 @@ class PaymentExternalSystemAdapterImpl(
 
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
+
+        // Чтобы сразу не заспамило
+        private const val RATE_EPS = 3
     }
 
     private val serviceName = properties.serviceName
@@ -34,7 +42,11 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val client = OkHttpClient.Builder().build()
+    val rateLimiter = makeRateLimiter(accountName, rateLimitPerSec - RATE_EPS)
+    private val client = OkHttpClient
+        .Builder()
+        .addInterceptor(RateLimiterInterceptor(rateLimiter))
+        .build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
