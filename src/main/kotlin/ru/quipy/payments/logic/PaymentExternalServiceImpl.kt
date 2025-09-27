@@ -7,6 +7,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
 import ru.quipy.common.utils.makeRateLimiter
+import ru.quipy.common.utils.okhttp.MetricsInterceptor
 import ru.quipy.common.utils.okhttp.RateLimiterInterceptor
 import ru.quipy.common.utils.okhttp.WindowLimiterInterceptor
 import ru.quipy.core.EventSourcingService
@@ -21,6 +22,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    metricsInterceptor: MetricsInterceptor,
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -55,6 +57,7 @@ class PaymentExternalSystemAdapterImpl(
         .Builder()
         .addInterceptor(WindowLimiterInterceptor(parallelRequests))
         .addInterceptor(RateLimiterInterceptor(rateLimiter))
+        .addInterceptor(metricsInterceptor)
         .build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
