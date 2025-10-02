@@ -6,12 +6,15 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import org.slf4j.LoggerFactory
+import ru.quipy.common.utils.makeRateLimiter
+import ru.quipy.common.utils.okhttp.MetricsInterceptor
+import ru.quipy.common.utils.okhttp.RateLimiterInterceptor
+import ru.quipy.common.utils.okhttp.WindowLimiterInterceptor
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
-import java.util.*
-
+import java.util.UUID
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
@@ -19,6 +22,7 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
+    metricsInterceptor: MetricsInterceptor,
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -26,6 +30,19 @@ class PaymentExternalSystemAdapterImpl(
 
         val emptyBody = RequestBody.create(null, ByteArray(0))
         val mapper = ObjectMapper().registerKotlinModule()
+
+        private const val DEFAULT_TARGET_UTILIZATION: Double = 0.8
+
+        private fun safeRps(limit: Int, targetUtilization: Double = 1.0): Int {
+            require(limit > 0)
+            require(targetUtilization > 0 && targetUtilization <= 1)
+
+            val safe = kotlin.math.floor(limit.toDouble() * targetUtilization)
+                .toInt()
+                .coerceAtLeast(1)
+
+            return safe
+        }
     }
 
     private val serviceName = properties.serviceName
@@ -34,7 +51,14 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val client = OkHttpClient.Builder().build()
+    private val safeRps = safeRps(rateLimitPerSec, DEFAULT_TARGET_UTILIZATION)
+    private val rateLimiter = makeRateLimiter(accountName, safeRps)
+    private val client = OkHttpClient
+        .Builder()
+        .addInterceptor(WindowLimiterInterceptor(parallelRequests))
+        .addInterceptor(RateLimiterInterceptor(rateLimiter))
+        .addInterceptor(metricsInterceptor)
+        .build()
 
     override fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         logger.warn("[$accountName] Submitting payment request for payment $paymentId")
