@@ -2,7 +2,6 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import io.github.resilience4j.ratelimiter.RateLimiter
 import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.reactor.awaitSingle
 import org.slf4j.Logger
@@ -12,6 +11,7 @@ import org.springframework.web.reactive.function.client.WebClient
 import reactor.core.publisher.Mono
 import reactor.core.scheduler.Schedulers
 import ru.quipy.apigateway.errors.TooManyRequestsException
+import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -41,17 +41,10 @@ class PaymentExternalSystemAdapterImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val rateLimiterConfig = io.github.resilience4j.ratelimiter.RateLimiterConfig
-        .custom()
-        .timeoutDuration(Duration.ofSeconds(1))
-        .limitRefreshPeriod(Duration.ofMillis(100))
-        .limitForPeriod(110)
-        .build()
-
-    private val rateLimiter = RateLimiter.of("$accountName-rate-limiter", rateLimiterConfig)
+    private val rateLimiter = SlidingWindowRateLimiter((rateLimitPerSec).toLong())
 
     private inline fun <reified T> rateLimited(mono: Mono<T>): Mono<T> =
-        Mono.fromCallable { rateLimiter.acquirePermission() }
+        Mono.fromCallable { rateLimiter.tick() }
             .subscribeOn(Schedulers.boundedElastic())
             .flatMap { permitted ->
                 if (permitted) mono

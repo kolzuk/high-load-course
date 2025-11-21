@@ -2,8 +2,9 @@ package ru.quipy.payments.logic
 
 import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.newFixedThreadPoolContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -18,6 +19,7 @@ class OrderPayer(registry: MeterRegistry) {
 
     companion object {
         val logger: Logger = LoggerFactory.getLogger(OrderPayer::class.java)
+        private const val THREAD_COUNT = 200
     }
 
     @Autowired
@@ -26,7 +28,10 @@ class OrderPayer(registry: MeterRegistry) {
     @Autowired
     private lateinit var paymentService: PaymentService
 
-    private val executorScope = CoroutineScope(Dispatchers.IO)
+    @OptIn(DelicateCoroutinesApi::class)
+    private val executorScope = CoroutineScope(
+        newFixedThreadPoolContext(THREAD_COUNT, "io_pool")
+    )
 
     private val paymentExecutionTimer = registry.timer("payment_executor_task_duration")
 
