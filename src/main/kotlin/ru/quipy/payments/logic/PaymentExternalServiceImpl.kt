@@ -11,12 +11,7 @@ import kotlinx.coroutines.reactor.awaitSingle
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
-import org.springframework.web.reactive.function.client.ClientRequest
-import org.springframework.web.reactive.function.client.ExchangeFilterFunction
 import org.springframework.web.reactive.function.client.WebClient
-import reactor.core.publisher.Mono
-import reactor.core.scheduler.Schedulers
-import ru.quipy.apigateway.errors.TooManyRequestsException
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
@@ -37,7 +32,7 @@ class PaymentExternalSystemAdapterImpl(
     companion object {
         val logger: Logger = LoggerFactory.getLogger(PaymentExternalSystemAdapter::class.java)
         val mapper = ObjectMapper().registerKotlinModule()
-        
+
         const val MAX_ATTEMPTS = 5
     }
 
@@ -46,6 +41,8 @@ class PaymentExternalSystemAdapterImpl(
     private val requestAverageProcessingTime = properties.averageProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
+
+    private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong())
 
     override suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         performPaymentAsync(paymentId, amount, paymentStartedAt, deadline, attempts = 0)
@@ -62,8 +59,14 @@ class PaymentExternalSystemAdapterImpl(
         newFixedThreadPoolContext(100, "db_pool")
     )
 
-    private suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long, attempts: Int) {
-        logger.warn("[$accountName] Submitting payment request for payment $paymentId")
+    private suspend fun performPaymentAsync(
+        paymentId: UUID,
+        amount: Int,
+        paymentStartedAt: Long,
+        deadline: Long,
+        attempts: Int
+    ) {
+        logger.info("[$accountName] Submitting payment request for payment $paymentId")
 
         val transactionId = UUID.randomUUID()
 
@@ -78,6 +81,8 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         try {
+            rateLimiter.tickBlocking()
+
             val response = webClient
                 .post()
                 .uri("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
