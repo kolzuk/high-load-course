@@ -2,8 +2,10 @@ package ru.quipy.config
 
 import jakarta.annotation.PostConstruct
 import org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory
+import org.eclipse.jetty.util.thread.QueuedThreadPool
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.web.embedded.jetty.JettyReactiveWebServerFactory
 import org.springframework.boot.web.embedded.jetty.JettyServerCustomizer
 import org.springframework.boot.web.embedded.jetty.JettyServletWebServerFactory
 import org.springframework.context.annotation.Bean
@@ -76,5 +78,22 @@ class EventSourcingLibConfiguration {
 
         jettyServletWebServerFactory.serverCustomizers.add(c)
         return jettyServletWebServerFactory
+    }
+
+    @Bean
+    fun jettyReactiveServerCustomizer(): JettyReactiveWebServerFactory {
+        val threadPool = QueuedThreadPool()
+        threadPool.maxThreads = 512
+        threadPool.minThreads = 8
+
+        val factory = JettyReactiveWebServerFactory()
+        factory.threadPool = threadPool
+
+        val c = JettyServerCustomizer {
+            (it.connectors[0].getConnectionFactory("h2c") as HTTP2CServerConnectionFactory).maxConcurrentStreams = 10_000_000
+        }
+
+        factory.addServerCustomizers(c)
+        return factory
     }
 }
