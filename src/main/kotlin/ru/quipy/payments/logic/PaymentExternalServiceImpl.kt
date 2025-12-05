@@ -8,6 +8,8 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newFixedThreadPoolContext
 import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
@@ -43,6 +45,7 @@ class PaymentExternalSystemAdapterImpl(
     private val parallelRequests = properties.parallelRequests
 
     private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong())
+    private val semaphore = Semaphore(parallelRequests)
 
     override suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         performPaymentAsync(paymentId, amount, paymentStartedAt, deadline, attempts = 0)
@@ -81,15 +84,25 @@ class PaymentExternalSystemAdapterImpl(
         logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
 
         try {
-            rateLimiter.tickBlocking()
+            val response = semaphore.withPermit {
+                rateLimiter.tickBlocking()
 
-            val response = webClient
-                .post()
-                .uri("http://$paymentProviderHostPort/external/process?serviceName=$serviceName&token=$token&accountName=$accountName&transactionId=$transactionId&paymentId=$paymentId&amount=$amount")
-                .accept(MediaType.APPLICATION_JSON)
-                .retrieve()
-                .toEntity(ExternalSysResponse::class.java)
-                .awaitSingle()
+                webClient
+                    .post()
+                    .uri(
+                        "http://$paymentProviderHostPort/external/process" +
+                                "?serviceName=$serviceName" +
+                                "&token=$token" +
+                                "&accountName=$accountName" +
+                                "&transactionId=$transactionId" +
+                                "&paymentId=$paymentId" +
+                                "&amount=$amount"
+                    )
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .toEntity(ExternalSysResponse::class.java)
+                    .awaitSingle()
+            }
 
             logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, message: ${response.body?.result}, result code: ${response.statusCode}")
 
