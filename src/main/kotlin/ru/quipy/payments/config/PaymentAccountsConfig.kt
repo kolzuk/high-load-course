@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.web.reactive.function.client.WebClient
+import ru.quipy.common.utils.queue.EsQueue
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAccountProperties
@@ -43,7 +44,8 @@ class PaymentAccountsConfig {
     fun accountAdapters(
         paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
         meterRegistry: MeterRegistry,
-        webClient: WebClient
+        webClient: WebClient,
+        esQueue: EsQueue
     ): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
             .uri(URI("http://${paymentProviderHostPort}/external/accounts?serviceName=$serviceName&token=$token"))
@@ -67,7 +69,8 @@ class PaymentAccountsConfig {
                     paymentProviderHostPort,
                     token,
                     meterRegistry,
-                    webClient
+                    webClient,
+                    esQueue
                 )
             }
     }

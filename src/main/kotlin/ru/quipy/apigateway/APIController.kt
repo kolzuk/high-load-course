@@ -1,5 +1,6 @@
 package ru.quipy.apigateway
 
+import com.github.f4b6a3.uuid.UuidCreator
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -9,7 +10,6 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
-import ru.quipy.common.utils.RateLimiter
 import ru.quipy.orders.repository.OrderRepository
 import ru.quipy.payments.logic.OrderPayer
 import java.util.UUID
@@ -25,12 +25,9 @@ class APIController(registry: MeterRegistry) {
     @Autowired
     private lateinit var orderPayer: OrderPayer
 
-    @Autowired
-    private lateinit var incomingRateLimiter: RateLimiter
-
     @PostMapping("/users")
     suspend fun createUser(@RequestBody req: CreateUserRequest): User {
-        return User(UUID.randomUUID(), req.name)
+        return User(UuidCreator.getTimeOrderedEpoch(), req.name)
     }
 
     data class CreateUserRequest(val name: String, val password: String)
@@ -39,8 +36,12 @@ class APIController(registry: MeterRegistry) {
 
     @PostMapping("/orders")
     suspend fun createOrder(@RequestParam userId: UUID, @RequestParam price: Int): Order {
+        val start = System.currentTimeMillis()
+        val uid = UuidCreator.getTimeOrderedEpoch()
+        val duration = System.currentTimeMillis() - start
+        logger.debug("$duration milliseconds")
         val order = Order(
-            UUID.randomUUID(),
+            uid,
             userId,
             System.currentTimeMillis(),
             OrderStatus.COLLECTING,
@@ -67,8 +68,7 @@ class APIController(registry: MeterRegistry) {
 
     @PostMapping("/orders/{orderId}/payment")
     suspend fun payOrder(@PathVariable orderId: UUID, @RequestParam deadline: Long): PaymentSubmissionDto {
-
-        val paymentId = UUID.randomUUID()
+        val paymentId = UuidCreator.getTimeOrderedEpoch()
         val order = orderRepository.findById(orderId)?.let {
             orderRepository.save(it.copy(status = OrderStatus.PAYMENT_IN_PROGRESS, attempt = it.attempt + 1))
         } ?: throw IllegalArgumentException("No such order $orderId")

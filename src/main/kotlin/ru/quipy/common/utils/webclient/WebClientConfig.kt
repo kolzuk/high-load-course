@@ -12,6 +12,7 @@ import reactor.netty.http.client.HttpClient
 import reactor.netty.resources.ConnectionProvider
 import ru.quipy.apigateway.errors.TooManyRequestsException
 import ru.quipy.common.utils.SlidingWindowRateLimiter
+import java.time.Duration
 
 @Configuration
 class WebClientConfig {
@@ -29,12 +30,15 @@ class WebClientConfig {
     fun webClient(): WebClient {
         val connectionProvider = ConnectionProvider
             .builder("connection_provider")
-            .maxConnections(10_000)
+            .maxConnections(2000)
+            .maxIdleTime(Duration.ofSeconds(20))
+            .metrics(true)
             .build()
 
         val httpClient = HttpClient
             .create(connectionProvider)
             .protocol(HttpProtocol.H2C)
+            .responseTimeout(Duration.ofMillis(800))
 
         return WebClient
             .builder()

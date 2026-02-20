@@ -2,19 +2,16 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.github.f4b6a3.uuid.UuidCreator
 import io.micrometer.core.instrument.MeterRegistry
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.newFixedThreadPoolContext
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
 import org.springframework.web.reactive.function.client.WebClient
 import ru.quipy.common.utils.SlidingWindowRateLimiter
+import ru.quipy.common.utils.queue.EsQueue
 import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
@@ -28,7 +25,8 @@ class PaymentExternalSystemAdapterImpl(
     private val paymentProviderHostPort: String,
     private val token: String,
     private val meterRegistry: MeterRegistry,
-    private val webClient: WebClient
+    private val webClient: WebClient,
+    private val esQueue: EsQueue
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -57,11 +55,6 @@ class PaymentExternalSystemAdapterImpl(
 
     override fun name() = properties.accountName
 
-    @OptIn(DelicateCoroutinesApi::class)
-    private val dbScope = CoroutineScope(
-        newFixedThreadPoolContext(100, "db_pool")
-    )
-
     private suspend fun performPaymentAsync(
         paymentId: UUID,
         amount: Int,
@@ -69,11 +62,11 @@ class PaymentExternalSystemAdapterImpl(
         deadline: Long,
         attempts: Int
     ) {
-        logger.info("[$accountName] Submitting payment request for payment $paymentId")
+        logger.debug("[{}] Submitting payment request for payment {}", accountName, paymentId)
 
-        val transactionId = UUID.randomUUID()
+        val transactionId = UuidCreator.getTimeOrderedEpoch()
 
-        dbScope.launch {
+        esQueue.submit {
             // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
             // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
             paymentESService.update(paymentId) {
@@ -81,12 +74,10 @@ class PaymentExternalSystemAdapterImpl(
             }
         }
 
-        logger.info("[$accountName] Submit: $paymentId , txId: $transactionId")
+        logger.debug("[{}] Submit: {} , txId: {}", accountName, paymentId, transactionId)
 
         try {
-            val response = semaphore.withPermit {
-                rateLimiter.tickBlocking()
-
+            val response =
                 webClient
                     .post()
                     .uri(
@@ -102,11 +93,17 @@ class PaymentExternalSystemAdapterImpl(
                     .retrieve()
                     .toEntity(ExternalSysResponse::class.java)
                     .awaitSingle()
-            }
 
-            logger.info("[$accountName] Payment processed for txId: $transactionId, payment: $paymentId, message: ${response.body?.result}, result code: ${response.statusCode}")
+            logger.debug(
+                "[{}] Payment processed for txId: {}, payment: {}, message: {}, result code: {}",
+                accountName,
+                transactionId,
+                paymentId,
+                response.body?.result,
+                response.statusCode
+            )
 
-            dbScope.launch {
+            esQueue.submitAsync {
                 // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
                 // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
                 paymentESService.update(paymentId) {
@@ -119,7 +116,7 @@ class PaymentExternalSystemAdapterImpl(
             when (e) {
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                    dbScope.launch {
+                    esQueue.submitAsync {
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
                         }
@@ -134,7 +131,7 @@ class PaymentExternalSystemAdapterImpl(
                 else -> {
                     logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
 
-                    dbScope.launch {
+                    esQueue.submitAsync {
                         paymentESService.update(paymentId) {
                             it.logProcessing(false, now(), transactionId, reason = e.message)
                         }
