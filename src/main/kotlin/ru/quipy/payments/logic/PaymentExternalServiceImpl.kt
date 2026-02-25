@@ -86,31 +86,26 @@ class PaymentExternalSystemAdapterImpl(
         logger.debug("[{}] Submit: {} , txId: {}", accountName, paymentId, transactionId)
 
         try {
-            rateLimiter.tickBlocking()
+            val response = coroutineScope {
+                select {
+                    async {
+                        makeRequest(paymentId, transactionId, amount)
+                    }.onAwait { it }
 
-            val response = semaphore.withPermit {
+                    async {
+                        delay(50)
+                        makeRequest(paymentId, transactionId, amount)
+                    }.onAwait { it }
 
-                coroutineScope {
-                    select {
-                        async {
-                            makeRequest(paymentId, transactionId, amount)
-                        }.onAwait { it }
+                    async {
+                        delay(100)
+                        makeRequest(paymentId, transactionId, amount)
+                    }.onAwait { it }
 
-                        async {
-                            delay(50)
-                            makeRequest(paymentId, transactionId, amount)
-                        }.onAwait { it }
-
-                        async {
-                            delay(100)
-                            makeRequest(paymentId, transactionId, amount)
-                        }.onAwait { it }
-
-                        async {
-                            delay(150)
-                            makeRequest(paymentId, transactionId, amount)
-                        }.onAwait { it }
-                    }
+                    async {
+                        delay(150)
+                        makeRequest(paymentId, transactionId, amount)
+                    }.onAwait { it }
                 }
             }
 
@@ -167,24 +162,27 @@ class PaymentExternalSystemAdapterImpl(
         transactionId: UUID,
         amount: Int
     ): ResponseEntity<ExternalSysResponse?> {
-        val start = now()
-        val res = webClient.post()
-            .uri(
-                "http://$paymentProviderHostPort/external/process" +
-                        "?serviceName=$serviceName" +
-                        "&token=$token" +
-                        "&accountName=$accountName" +
-                        "&transactionId=$transactionId" +
-                        "&paymentId=$paymentId" +
-                        "&amount=$amount"
-            )
-            .header("x-idempotency-key", paymentId.toString())
-            .accept(MediaType.APPLICATION_JSON)
-            .retrieve()
-            .toEntity(ExternalSysResponse::class.java)
-            .awaitSingle()
-        timer.record(now() - start, TimeUnit.MILLISECONDS)
-        return res
+        rateLimiter.tickBlocking()
+        return semaphore.withPermit {
+            val start = now()
+            val res = webClient.post()
+                .uri(
+                    "http://$paymentProviderHostPort/external/process" +
+                            "?serviceName=$serviceName" +
+                            "&token=$token" +
+                            "&accountName=$accountName" +
+                            "&transactionId=$transactionId" +
+                            "&paymentId=$paymentId" +
+                            "&amount=$amount"
+                )
+                .header("x-idempotency-key", paymentId.toString())
+                .accept(MediaType.APPLICATION_JSON)
+                .retrieve()
+                .toEntity(ExternalSysResponse::class.java)
+                .awaitSingle()
+            timer.record(now() - start, TimeUnit.MILLISECONDS)
+            res
+        }
     }
 }
 
