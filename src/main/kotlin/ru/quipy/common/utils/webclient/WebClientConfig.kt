@@ -38,7 +38,7 @@ class WebClientConfig {
         val httpClient = HttpClient
             .create(connectionProvider)
             .protocol(HttpProtocol.H2C)
-            .responseTimeout(Duration.ofMillis(800))
+//            .responseTimeout(Duration.ofMillis(800))
 
         return WebClient
             .builder()

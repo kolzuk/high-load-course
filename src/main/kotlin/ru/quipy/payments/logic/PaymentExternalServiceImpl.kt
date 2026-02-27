@@ -4,11 +4,16 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.github.f4b6a3.uuid.UuidCreator
 import io.micrometer.core.instrument.MeterRegistry
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
+import org.springframework.http.ResponseEntity
 import org.springframework.web.reactive.function.client.WebClient
 import ru.quipy.common.utils.SlidingWindowRateLimiter
 import ru.quipy.common.utils.queue.EsQueue
@@ -16,6 +21,7 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.payments.api.PaymentAggregate
 import java.net.SocketTimeoutException
 import java.time.Duration
+import java.util.concurrent.TimeUnit
 import java.util.UUID
 
 // Advice: always treat time as a Duration
@@ -44,6 +50,8 @@ class PaymentExternalSystemAdapterImpl(
 
     private val rateLimiter = SlidingWindowRateLimiter(rateLimitPerSec.toLong())
     private val semaphore = Semaphore(parallelRequests)
+
+    private val timer = meterRegistry.timer("external_service_latency")
 
     override suspend fun performPaymentAsync(paymentId: UUID, amount: Int, paymentStartedAt: Long, deadline: Long) {
         performPaymentAsync(paymentId, amount, paymentStartedAt, deadline, attempts = 0)
@@ -77,22 +85,26 @@ class PaymentExternalSystemAdapterImpl(
         logger.debug("[{}] Submit: {} , txId: {}", accountName, paymentId, transactionId)
 
         try {
-            val response =
-                webClient
-                    .post()
-                    .uri(
-                        "http://$paymentProviderHostPort/external/process" +
-                                "?serviceName=$serviceName" +
-                                "&token=$token" +
-                                "&accountName=$accountName" +
-                                "&transactionId=$transactionId" +
-                                "&paymentId=$paymentId" +
-                                "&amount=$amount"
-                    )
-                    .accept(MediaType.APPLICATION_JSON)
-                    .retrieve()
-                    .toEntity(ExternalSysResponse::class.java)
-                    .awaitSingle()
+            val response = coroutineScope {
+                select {
+                    async {
+                        makeRequest(paymentId, transactionId, amount)
+                    }.onAwait { it }
+
+                    async {
+                        makeRequest(paymentId, transactionId, amount)
+                    }.onAwait { it }
+
+                    async {
+                        makeRequest(paymentId, transactionId, amount)
+                    }.onAwait { it }
+
+                    async {
+                        makeRequest(paymentId, transactionId, amount)
+                    }.onAwait { it }
+                }
+            }
+
 
             logger.debug(
                 "[{}] Payment processed for txId: {}, payment: {}, message: {}, result code: {}",
@@ -138,6 +150,34 @@ class PaymentExternalSystemAdapterImpl(
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun makeRequest(
+        paymentId: UUID,
+        transactionId: UUID,
+        amount: Int
+    ): ResponseEntity<ExternalSysResponse?> {
+        rateLimiter.tickBlocking()
+        return semaphore.withPermit {
+            val start = now()
+            val res = webClient.post()
+                .uri(
+                    "http://$paymentProviderHostPort/external/process" +
+                            "?serviceName=$serviceName" +
+                            "&token=$token" +
+                            "&accountName=$accountName" +
+                            "&transactionId=$transactionId" +
+                            "&paymentId=$paymentId" +
+                            "&amount=$amount"
+                )
+                .header("x-idempotency-key", paymentId.toString())
+                .accept(MediaType.APPLICATION_JSON)
+                .retrieve()
+                .toEntity(ExternalSysResponse::class.java)
+                .awaitSingle()
+            timer.record(now() - start, TimeUnit.MILLISECONDS)
+            res
         }
     }
 }
