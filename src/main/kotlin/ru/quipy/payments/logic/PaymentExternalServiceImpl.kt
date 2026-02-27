@@ -98,6 +98,10 @@ class PaymentExternalSystemAdapterImpl(
                     async {
                         makeRequest(paymentId, transactionId, amount)
                     }.onAwait { it }
+
+                    async {
+                        makeRequest(paymentId, transactionId, amount)
+                    }.onAwait { it }
                 }
             }
 
