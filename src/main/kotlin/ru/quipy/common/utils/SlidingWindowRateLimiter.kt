@@ -32,9 +32,9 @@ class SlidingWindowRateLimiter(
         }
     }
 
-    fun tickBlocking() {
+    suspend fun tickBlocking() {
         while (!tick()) {
-            Thread.sleep(10)
+            delay(10)
         }
     }
 
@@ -63,6 +63,7 @@ class SlidingWindowRateLimiter(
             queue.take()
         }
     }.invokeOnCompletion { th -> if (th != null) logger.error("Rate limiter release job completed", th) }
+
     companion object {
         private val logger: Logger = LoggerFactory.getLogger(SlidingWindowRateLimiter::class.java)
     }

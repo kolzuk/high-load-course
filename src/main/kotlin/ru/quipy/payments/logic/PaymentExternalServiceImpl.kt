@@ -6,7 +6,6 @@ import com.github.f4b6a3.uuid.UuidCreator
 import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
@@ -93,17 +92,10 @@ class PaymentExternalSystemAdapterImpl(
                     }.onAwait { it }
 
                     async {
-                        delay(50)
                         makeRequest(paymentId, transactionId, amount)
                     }.onAwait { it }
 
                     async {
-                        delay(100)
-                        makeRequest(paymentId, transactionId, amount)
-                    }.onAwait { it }
-
-                    async {
-                        delay(150)
                         makeRequest(paymentId, transactionId, amount)
                     }.onAwait { it }
                 }
