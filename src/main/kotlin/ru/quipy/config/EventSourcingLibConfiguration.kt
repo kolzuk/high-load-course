@@ -82,18 +82,20 @@ class EventSourcingLibConfiguration {
 
     @Bean
     fun jettyReactiveServerCustomizer(): JettyReactiveWebServerFactory {
-        val threadPool = QueuedThreadPool()
-        threadPool.maxThreads = 512
-        threadPool.minThreads = 8
-
-        val factory = JettyReactiveWebServerFactory()
-        factory.threadPool = threadPool
-
-        val c = JettyServerCustomizer {
-            (it.connectors[0].getConnectionFactory("h2c") as HTTP2CServerConnectionFactory).maxConcurrentStreams = 10_000_000
+        val threadPool = QueuedThreadPool().apply {
+            maxThreads = 128
+            minThreads = 16
         }
 
-        factory.addServerCustomizers(c)
-        return factory
+        return JettyReactiveWebServerFactory().apply {
+            this.threadPool = threadPool
+
+            addServerCustomizers(
+                JettyServerCustomizer {
+                    (it.connectors[0].getConnectionFactory("h2c") as HTTP2CServerConnectionFactory)
+                        .maxConcurrentStreams = 1000
+                }
+            )
+        }
     }
 }

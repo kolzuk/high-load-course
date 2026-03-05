@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - ${POSTGRES_CONTAINER_EXPOSED_PORT}:${POSTGRES_CONTAINER_INTERNAL_PORT}
-    command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c max_connections=200
+    command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c max_connections=228
     restart: unless-stopped
     networks:
       - external_network
@@ -59,6 +59,14 @@ services:
       - TOKENS_AUTH_HOSTS=77.234.215.138:34321,host.docker.internal:4321
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  pyroscope:
+    image: grafana/pyroscope:latest
+    command: ["server"]
+    ports:
+      - "4040:4040"
+    networks:
+      - external_network
 
 networks:
   external_network:
