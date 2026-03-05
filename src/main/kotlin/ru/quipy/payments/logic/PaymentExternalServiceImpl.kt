@@ -66,13 +66,13 @@ class PaymentExternalSystemAdapterImpl(
 
         val transactionId = UuidCreator.getTimeOrderedEpoch()
 
-        esQueue.submit {
-            // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
-            // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-            paymentESService.update(paymentId) {
-                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-            }
-        }
+//        esQueue.submit {
+//            // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
+//            // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
+//            paymentESService.update(paymentId) {
+//                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
+//            }
+//        }
 
         logger.debug("[{}] Submit: {} , txId: {}", accountName, paymentId, transactionId)
 
@@ -103,24 +103,24 @@ class PaymentExternalSystemAdapterImpl(
                 response.statusCode
             )
 
-            esQueue.submitAsync {
-                // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-                paymentESService.update(paymentId) {
-                    it.logProcessing(
-                        response.body!!.result, now(), transactionId, reason = response.body!!.message
-                    )
-                }
-            }
+//            esQueue.submitAsync {
+//                // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
+//                // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
+//                paymentESService.update(paymentId) {
+//                    it.logProcessing(
+//                        response.body!!.result, now(), transactionId, reason = response.body!!.message
+//                    )
+//                }
+//            }
         } catch (e: Exception) {
             when (e) {
                 is SocketTimeoutException -> {
                     logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                    esQueue.submitAsync {
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                        }
-                    }
+//                    esQueue.submitAsync {
+//                        paymentESService.update(paymentId) {
+//                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
+//                        }
+//                    }
                 }
                 // is TooManyRequestsException -> {
                 //     logger.error("[$accountName] Too many requests for txId: $transactionId, payment: $paymentId")
@@ -131,11 +131,11 @@ class PaymentExternalSystemAdapterImpl(
                 else -> {
                     logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
 
-                    esQueue.submitAsync {
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = e.message)
-                        }
-                    }
+//                    esQueue.submitAsync {
+//                        paymentESService.update(paymentId) {
+//                            it.logProcessing(false, now(), transactionId, reason = e.message)
+//                        }
+//                    }
                 }
             }
         }
