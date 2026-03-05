@@ -6,6 +6,7 @@ import com.github.f4b6a3.uuid.UuidCreator
 import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
@@ -77,7 +78,7 @@ class PaymentExternalSystemAdapterImpl(
         logger.debug("[{}] Submit: {} , txId: {}", accountName, paymentId, transactionId)
 
         try {
-            val response =
+            val response = semaphore.withPermit {
                 webClient
                     .post()
                     .uri(
@@ -93,6 +94,7 @@ class PaymentExternalSystemAdapterImpl(
                     .retrieve()
                     .toEntity(ExternalSysResponse::class.java)
                     .awaitSingle()
+            }
 
             logger.debug(
                 "[{}] Payment processed for txId: {}, payment: {}, message: {}, result code: {}",
