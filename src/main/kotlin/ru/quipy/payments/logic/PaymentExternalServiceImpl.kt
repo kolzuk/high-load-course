@@ -67,12 +67,12 @@ class PaymentExternalSystemAdapterImpl(
         logger.debug("[{}] Submit: {} , txId: {}", accountName, paymentId, transactionId)
 
         while (!circuitBreaker.tryAcquirePermission()) {
-            delay(500)
+            delay(10)
         }
         val start = now()
 
         try {
-            val response = withTimeout(400) {
+            val response = withTimeout(200) {
                 makeRequest(paymentId, transactionId, amount)
             }
 

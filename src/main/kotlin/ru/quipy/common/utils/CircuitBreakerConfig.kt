@@ -13,9 +13,9 @@ class CircuitBreakerConfig {
     fun circuitBreaker(): CircuitBreaker {
         val circuitBreakerConfig = CircuitBreakerConfig.custom()
             .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
-            .slidingWindowSize(50)
-            .failureRateThreshold(10f)
-            .waitDurationInOpenState(Duration.ofSeconds(5))
+            .slidingWindowSize(40)
+            .failureRateThreshold(70f)
+            .waitDurationInOpenState(Duration.ofSeconds(1))
             .build()
 
         return CircuitBreaker.of("default", circuitBreakerConfig)
