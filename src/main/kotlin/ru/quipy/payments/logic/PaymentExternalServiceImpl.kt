@@ -2,13 +2,13 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import io.github.resilience4j.circuitbreaker.CircuitBreaker
 import io.micrometer.core.instrument.MeterRegistry
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.reactor.awaitSingle
-import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeout
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
@@ -25,6 +25,7 @@ class PaymentExternalSystemAdapterImpl(
     private val token: String,
     meterRegistry: MeterRegistry,
     private val webClient: WebClient,
+    private val circuitBreaker: CircuitBreaker
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -65,27 +66,15 @@ class PaymentExternalSystemAdapterImpl(
         val transactionId = UUID.randomUUID()
         logger.debug("[{}] Submit: {} , txId: {}", accountName, paymentId, transactionId)
 
+        while (!circuitBreaker.tryAcquirePermission()) {
+            delay(500)
+        }
+        val start = now()
+
         try {
-            val response = coroutineScope {
-                select {
-                    async {
-                        makeRequest(paymentId, transactionId, amount)
-                    }.onAwait { it }
-
-                    async {
-                        makeRequest(paymentId, transactionId, amount)
-                    }.onAwait { it }
-
-                    async {
-                        makeRequest(paymentId, transactionId, amount)
-                    }.onAwait { it }
-
-                    async {
-                        makeRequest(paymentId, transactionId, amount)
-                    }.onAwait { it }
-                }
+            val response = withTimeout(400) {
+                makeRequest(paymentId, transactionId, amount)
             }
-
 
             logger.debug(
                 "[{}] Payment processed for txId: {}, payment: {}, message: {}, result code: {}",
@@ -95,10 +84,16 @@ class PaymentExternalSystemAdapterImpl(
                 response.body?.result,
                 response.statusCode
             )
+            circuitBreaker.onSuccess(now() - start, TimeUnit.MILLISECONDS)
         } catch (e: Exception) {
             logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
+            circuitBreaker.onError(now() - start, TimeUnit.MILLISECONDS, e)
+            if (now() < deadline) {
+                performPaymentAsync(paymentId, amount, paymentStartedAt, deadline, attempts + 1)
+            }
         }
     }
+
 
     private suspend fun makeRequest(
         paymentId: UUID,
