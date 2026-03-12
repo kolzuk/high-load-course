@@ -8,18 +8,13 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.web.reactive.function.client.WebClient
-import ru.quipy.common.utils.queue.EsQueue
-import ru.quipy.core.EventSourcingService
-import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.logic.PaymentAccountProperties
-import ru.quipy.payments.logic.PaymentAggregateState
 import ru.quipy.payments.logic.PaymentExternalSystemAdapter
 import ru.quipy.payments.logic.PaymentExternalSystemAdapterImpl
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
-import java.util.UUID
 
 @Configuration
 class PaymentAccountsConfig {
@@ -42,10 +37,8 @@ class PaymentAccountsConfig {
 
     @Bean
     fun accountAdapters(
-        paymentService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
         meterRegistry: MeterRegistry,
         webClient: WebClient,
-        esQueue: EsQueue
     ): List<PaymentExternalSystemAdapter> {
         val request = HttpRequest.newBuilder()
             .uri(URI("http://${paymentProviderHostPort}/external/accounts?serviceName=$serviceName&token=$token"))
@@ -65,12 +58,10 @@ class PaymentAccountsConfig {
             .map {
                 PaymentExternalSystemAdapterImpl(
                     it,
-                    paymentService,
                     paymentProviderHostPort,
                     token,
                     meterRegistry,
                     webClient,
-                    esQueue
                 )
             }
     }

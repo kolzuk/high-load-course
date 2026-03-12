@@ -2,7 +2,6 @@ package ru.quipy.payments.logic
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import com.github.f4b6a3.uuid.UuidCreator
 import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -16,23 +15,16 @@ import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.web.reactive.function.client.WebClient
 import ru.quipy.common.utils.SlidingWindowRateLimiter
-import ru.quipy.common.utils.queue.EsQueue
-import ru.quipy.core.EventSourcingService
-import ru.quipy.payments.api.PaymentAggregate
-import java.net.SocketTimeoutException
-import java.time.Duration
 import java.util.concurrent.TimeUnit
 import java.util.UUID
 
 // Advice: always treat time as a Duration
 class PaymentExternalSystemAdapterImpl(
     private val properties: PaymentAccountProperties,
-    private val paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>,
     private val paymentProviderHostPort: String,
     private val token: String,
-    private val meterRegistry: MeterRegistry,
+    meterRegistry: MeterRegistry,
     private val webClient: WebClient,
-    private val esQueue: EsQueue
 ) : PaymentExternalSystemAdapter {
 
     companion object {
@@ -70,18 +62,7 @@ class PaymentExternalSystemAdapterImpl(
         deadline: Long,
         attempts: Int
     ) {
-        logger.debug("[{}] Submitting payment request for payment {}", accountName, paymentId)
-
-        val transactionId = UuidCreator.getTimeOrderedEpoch()
-
-        esQueue.submit {
-            // Вне зависимости от исхода оплаты важно отметить что она была отправлена.
-            // Это требуется сделать ВО ВСЕХ СЛУЧАЯХ, поскольку эта информация используется сервисом тестирования.
-            paymentESService.update(paymentId) {
-                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - paymentStartedAt))
-            }
-        }
-
+        val transactionId = UUID.randomUUID()
         logger.debug("[{}] Submit: {} , txId: {}", accountName, paymentId, transactionId)
 
         try {
@@ -114,42 +95,8 @@ class PaymentExternalSystemAdapterImpl(
                 response.body?.result,
                 response.statusCode
             )
-
-            esQueue.submitAsync {
-                // Здесь мы обновляем состояние оплаты в зависимости от результата в базе данных оплат.
-                // Это требуется сделать ВО ВСЕХ ИСХОДАХ (успешная оплата / неуспешная / ошибочная ситуация)
-                paymentESService.update(paymentId) {
-                    it.logProcessing(
-                        response.body!!.result, now(), transactionId, reason = response.body!!.message
-                    )
-                }
-            }
         } catch (e: Exception) {
-            when (e) {
-                is SocketTimeoutException -> {
-                    logger.error("[$accountName] Payment timeout for txId: $transactionId, payment: $paymentId", e)
-                    esQueue.submitAsync {
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = "Request timeout.")
-                        }
-                    }
-                }
-                // is TooManyRequestsException -> {
-                //     logger.error("[$accountName] Too many requests for txId: $transactionId, payment: $paymentId")
-                //     if (attempts < MAX_ATTEMPTS && deadline - now() > requestAverageProcessingTime.toMillis()) {
-                //         performPaymentAsync(paymentId, amount, paymentStartedAt, deadline, attempts + 1)
-                //     }
-                // }
-                else -> {
-                    logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
-
-                    esQueue.submitAsync {
-                        paymentESService.update(paymentId) {
-                            it.logProcessing(false, now(), transactionId, reason = e.message)
-                        }
-                    }
-                }
-            }
+            logger.error("[$accountName] Payment failed for txId: $transactionId, payment: $paymentId", e)
         }
     }
 
