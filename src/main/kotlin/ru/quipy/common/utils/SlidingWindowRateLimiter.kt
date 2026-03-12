@@ -19,14 +19,14 @@ class SlidingWindowRateLimiter(
     private val rateLimiterScope = CoroutineScope(Executors.newSingleThreadExecutor().asCoroutineDispatcher())
 
     private val sum = AtomicLong(0)
-    private val queue = PriorityBlockingQueue<Measure>(100)
+    private val queue = PriorityBlockingQueue<Measure>(rate.toInt())
 
     override fun tick(): Boolean {
         while (true) {
             val curSum = sum.get()
             if (curSum >= rate) return false
             if (sum.compareAndSet(curSum, curSum + 1)) {
-                queue.add(Measure(1, System.nanoTime()))
+                queue.add(Measure(System.nanoTime()))
                 return true
             }
         }
@@ -39,7 +39,6 @@ class SlidingWindowRateLimiter(
     }
 
     data class Measure(
-        val value: Long,
         val timestamp: Long
     ) : Comparable<Measure> {
         override fun compareTo(other: Measure): Int {
